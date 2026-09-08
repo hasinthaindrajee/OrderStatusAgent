@@ -82,22 +82,28 @@ class OrderStatusAgent:
                 "the OPENAI_API_KEY environment variable."
             )
 
+        # base_url=None lets the OpenAI SDK use its own default endpoint
+        # (https://api.openai.com/v1).
+        self._client = OpenAI(api_key=resolved_key, base_url=base_url)
+        self._model = model
+
         if base_url:
             # Routing through a custom endpoint (e.g. an LLM gateway/proxy)
-            # instead of OpenAI directly. These gateways typically expect
-            # their own API key header rather than OpenAI's
-            # "Authorization: Bearer" scheme, so swap it out: Omit() drops
-            # the SDK's default Authorization header entirely.
-            self._client = OpenAI(
-                api_key=resolved_key,
-                base_url=base_url,
-                default_headers={"Authorization": Omit(), "X-API-Key": resolved_key},
-            )
+            # instead of OpenAI directly. These typically expect their own
+            # API key header rather than OpenAI's "Authorization: Bearer"
+            # scheme, so swap it in per-request: Omit() drops the SDK's
+            # default Authorization header. This has to be passed as
+            # per-request extra_headers (not client-level default_headers)
+            # — openai>=2.0 only recognizes an omitted Authorization header
+            # when it's set at the request level; setting it at client
+            # construction time raises "Could not resolve authentication
+            # method" even though the header ends up correct either way.
+            self._extra_headers: dict[str, Any] | None = {
+                "Authorization": Omit(),
+                "X-API-Key": resolved_key,
+            }
         else:
-            # base_url=None lets the OpenAI SDK use its own default
-            # (https://api.openai.com/v1) with its normal auth header.
-            self._client = OpenAI(api_key=resolved_key)
-        self._model = model
+            self._extra_headers = None
 
     def run(
         self,
@@ -127,6 +133,7 @@ class OrderStatusAgent:
                 messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
                 tools=[ORDER_STATUS_TOOL_SCHEMA],
                 tool_choice="auto",
+                extra_headers=self._extra_headers,
             )
 
             assistant_message = _serialize_assistant_message(response.choices[0].message)

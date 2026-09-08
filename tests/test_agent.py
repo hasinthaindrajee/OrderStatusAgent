@@ -73,27 +73,60 @@ def test_missing_api_key_raises() -> None:
 
 def test_default_base_url_uses_openais_own_client_config() -> None:
     with patch("agent.OpenAI") as mock_openai_cls:
-        OrderStatusAgent(api_key="test-key")
+        agent_obj = OrderStatusAgent(api_key="test-key")
 
-    # No base_url or default_headers override — the OpenAI SDK uses its own
-    # default endpoint (https://api.openai.com/v1) and Authorization header.
+    # base_url=None lets the OpenAI SDK use its own default endpoint, and no
+    # extra_headers override means requests use its normal Authorization
+    # header.
     kwargs = mock_openai_cls.call_args.kwargs
-    assert "base_url" not in kwargs
-    assert "default_headers" not in kwargs
+    assert kwargs.get("base_url") is None
+    assert agent_obj._extra_headers is None
 
 
-def test_custom_base_url_swaps_auth_header_for_x_api_key() -> None:
+def test_custom_base_url_prepares_x_api_key_extra_headers() -> None:
     with patch("agent.OpenAI") as mock_openai_cls:
-        OrderStatusAgent(api_key="test-key", base_url="https://llm-gateway.example.com/v1")
+        agent_obj = OrderStatusAgent(api_key="test-key", base_url="https://llm-gateway.example.com/v1")
 
-    kwargs = mock_openai_cls.call_args.kwargs
-    assert kwargs["base_url"] == "https://llm-gateway.example.com/v1"
-    assert kwargs["default_headers"]["X-API-Key"] == "test-key"
+    assert mock_openai_cls.call_args.kwargs["base_url"] == "https://llm-gateway.example.com/v1"
+
     # The default OpenAI "Authorization: Bearer ..." header must be dropped
     # in favor of X-API-Key when routing through a custom gateway/proxy.
+    # This has to be applied as per-request extra_headers (asserted in
+    # test_run_forwards_extra_headers_for_custom_gateway below), not
+    # client-level default_headers — openai>=2.0 only recognizes an
+    # omitted Authorization header at the request level.
     from openai import Omit
 
-    assert isinstance(kwargs["default_headers"]["Authorization"], Omit)
+    assert agent_obj._extra_headers["X-API-Key"] == "test-key"
+    assert isinstance(agent_obj._extra_headers["Authorization"], Omit)
+
+
+def test_run_forwards_extra_headers_for_custom_gateway() -> None:
+    final_response = _text_response("ok")
+
+    with patch("agent.OpenAI") as mock_openai_cls:
+        client = _client_with_responses([final_response])
+        mock_openai_cls.return_value = client
+
+        agent_obj = OrderStatusAgent(api_key="test-key", base_url="https://llm-gateway.example.com/v1")
+        agent_obj.run("hi")
+
+    call_kwargs = client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["extra_headers"]["X-API-Key"] == "test-key"
+
+
+def test_run_forwards_no_extra_headers_by_default() -> None:
+    final_response = _text_response("ok")
+
+    with patch("agent.OpenAI") as mock_openai_cls:
+        client = _client_with_responses([final_response])
+        mock_openai_cls.return_value = client
+
+        agent_obj = OrderStatusAgent(api_key="test-key")
+        agent_obj.run("hi")
+
+    call_kwargs = client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["extra_headers"] is None
 
 
 def test_run_executes_tool_and_returns_final_text() -> None:

@@ -34,11 +34,13 @@ OPENAI_URL = os.environ.get("OPENAI_URL")
 
 
 def _mask_key(key: str | None) -> str:
+    """Partially reveal a secret for logging: enough to tell keys apart
+    without ever writing the full value to logs."""
     if not key:
         return "<missing>"
-    if len(key) <= 4:
-        return "****"
-    return f"...{key[-4:]}"
+    if len(key) <= 10:
+        return f"...{key[-4:]}"
+    return f"{key[:6]}...{key[-4:]}"
 
 SYSTEM_PROMPT = """You are a customer service assistant for C&S Wholesale Grocers, \
 helping customers check the status of their orders.
@@ -108,8 +110,14 @@ class OrderStatusAgent:
                 "Authorization": Omit(),
                 "X-API-Key": resolved_key,
             }
+            # Same headers, but with the key masked — safe to put in logs.
+            self._loggable_extra_headers = {
+                "Authorization": "<omitted>",
+                "X-API-Key": self.masked_api_key,
+            }
         else:
             self._extra_headers = None
+            self._loggable_extra_headers = {"Authorization": f"Bearer {self.masked_api_key}"}
 
     def run(
         self,
@@ -134,6 +142,11 @@ class OrderStatusAgent:
         tools_called: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
+            log.debug(
+                "Calling %s/chat/completions with headers=%s",
+                str(self._client.base_url).rstrip("/"),
+                self._loggable_extra_headers,
+            )
             response = self._client.chat.completions.create(
                 model=self._model,
                 messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,

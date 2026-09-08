@@ -57,16 +57,23 @@ Edit `.env` (or export directly) and set:
   normally.
 
 On startup the server logs the effective model, `OPENAI_URL` (or "OpenAI
-default"), and a masked `OPENAI_API_KEY` (last 4 characters only) — check
-this first when a deployed instance behaves unexpectedly, to confirm it
-picked up the environment variables you think it did. A failed `/chat`
-request logs a compact one-line summary — exception type + message, plus
-the same `base_url`/masked-key pair that was actually in effect for that
+default"), and a masked `OPENAI_API_KEY` — check this first when a
+deployed instance behaves unexpectedly, to confirm it picked up the
+environment variables you think it did. A failed `/chat` request logs a
+compact one-line summary — exception type + message, plus the same
+`base_url`/masked-key pair that was actually in effect for that
 request — before the full traceback, so the cause is diagnosable from
 that one line alone even if a log viewer truncates or reorders
 multi-line output, or if you're not sure the deployment picked up a
-recent env var change. The key is always masked to its last 4
-characters; the full key is never logged.
+recent env var change. At `LOG_LEVEL=DEBUG`, each outbound request also
+logs the exact headers being sent (e.g. `Authorization: <omitted>,
+X-API-Key: sk-proj...ab3f` when routed through a custom `OPENAI_URL`) —
+useful for confirming exactly what's on the wire when a gateway rejects
+a request. The key is masked in all of these (first 6 + last 4
+characters) — the full key is never logged, intentionally: this app may
+run on a shared platform where log access is broader than just you, and
+logs often get retained or shipped elsewhere. To check a key's exact
+value, use whatever secret store/vault you set it from — not app logs.
 
 ## Running the CLI
 

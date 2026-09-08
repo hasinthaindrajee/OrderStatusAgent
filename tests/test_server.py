@@ -5,25 +5,38 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from cs_order_agent import server
+import agent as agent_module
 
 
 @pytest.fixture(autouse=True)
 def _clear_sessions() -> None:
-    server._sessions.clear()
+    agent_module.SESSIONS.clear()
     yield
-    server._sessions.clear()
+    agent_module.SESSIONS.clear()
 
 
 def _make_result(reply: str, history: list[dict]) -> dict:
     return {"reply": reply, "conversation_history": history, "tools_called": [], "order": None}
 
 
+def test_root_route_describes_the_service() -> None:
+    agent_mock = MagicMock()
+
+    with patch("agent.OrderStatusAgent", return_value=agent_mock):
+        with TestClient(agent_module.app) as client:
+            response = client.get("/")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "chat" in body["tip"].lower()
+    agent_mock.run.assert_not_called()
+
+
 def test_health_does_not_touch_agent() -> None:
     agent_mock = MagicMock()
 
-    with patch("cs_order_agent.server.OrderStatusAgent", return_value=agent_mock):
-        with TestClient(server.app) as client:
+    with patch("agent.OrderStatusAgent", return_value=agent_mock):
+        with TestClient(agent_module.app) as client:
             response = client.get("/health")
 
     assert response.status_code == 200
@@ -34,8 +47,8 @@ def test_health_does_not_touch_agent() -> None:
 def test_chat_missing_message_returns_400() -> None:
     agent_mock = MagicMock()
 
-    with patch("cs_order_agent.server.OrderStatusAgent", return_value=agent_mock):
-        with TestClient(server.app) as client:
+    with patch("agent.OrderStatusAgent", return_value=agent_mock):
+        with TestClient(agent_module.app) as client:
             response = client.post("/chat", json={"session_id": "s1"})
 
     assert response.status_code == 400
@@ -49,8 +62,8 @@ def test_chat_returns_response_field_matching_platform_contract() -> None:
         [{"role": "user", "content": "hi"}],
     )
 
-    with patch("cs_order_agent.server.OrderStatusAgent", return_value=agent_mock):
-        with TestClient(server.app) as client:
+    with patch("agent.OrderStatusAgent", return_value=agent_mock):
+        with TestClient(agent_module.app) as client:
             response = client.post(
                 "/chat",
                 json={
@@ -68,8 +81,8 @@ def test_chat_without_session_id_still_works() -> None:
     agent_mock = MagicMock()
     agent_mock.run.return_value = _make_result("Sure, what's your order number?", [])
 
-    with patch("cs_order_agent.server.OrderStatusAgent", return_value=agent_mock):
-        with TestClient(server.app) as client:
+    with patch("agent.OrderStatusAgent", return_value=agent_mock):
+        with TestClient(agent_module.app) as client:
             response = client.post("/chat", json={"message": "hi"})
 
     assert response.status_code == 200
@@ -86,8 +99,8 @@ def test_chat_session_continuity_passes_prior_history() -> None:
         ),
     ]
 
-    with patch("cs_order_agent.server.OrderStatusAgent", return_value=agent_mock):
-        with TestClient(server.app) as client:
+    with patch("agent.OrderStatusAgent", return_value=agent_mock):
+        with TestClient(agent_module.app) as client:
             client.post("/chat", json={"message": "a", "session_id": "s1"})
             client.post("/chat", json={"message": "b", "session_id": "s1"})
 
@@ -105,8 +118,8 @@ def test_chat_different_sessions_do_not_share_history() -> None:
         _make_result("reply for s2", [{"role": "user", "content": "z"}]),
     ]
 
-    with patch("cs_order_agent.server.OrderStatusAgent", return_value=agent_mock):
-        with TestClient(server.app) as client:
+    with patch("agent.OrderStatusAgent", return_value=agent_mock):
+        with TestClient(agent_module.app) as client:
             client.post("/chat", json={"message": "a", "session_id": "s1"})
             client.post("/chat", json={"message": "z", "session_id": "s2"})
 
@@ -118,8 +131,8 @@ def test_chat_agent_failure_returns_500_without_leaking_traceback() -> None:
     agent_mock = MagicMock()
     agent_mock.run.side_effect = RuntimeError("boom - secret internal detail")
 
-    with patch("cs_order_agent.server.OrderStatusAgent", return_value=agent_mock):
-        with TestClient(server.app) as client:
+    with patch("agent.OrderStatusAgent", return_value=agent_mock):
+        with TestClient(agent_module.app) as client:
             response = client.post("/chat", json={"message": "hi", "session_id": "s1"})
 
     assert response.status_code == 500

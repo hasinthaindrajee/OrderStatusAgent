@@ -8,22 +8,26 @@ hardcoded data.
 ## Project layout
 
 ```
-main.py       # `python main.py` entry point (for platforms that require it)
-cs_order_agent/
-  data.py     # hardcoded order records (swap this for a real API later)
-  tools.py    # get_order_status() + its OpenAI function-calling schema
-  agent.py    # OrderStatusAgent — the tool-use loop
-  server.py   # FastAPI app: POST /chat, GET /health
-  cli.py      # terminal REPL for local testing
+main.py       # `python main.py` entry point
+agent.py      # OrderStatusAgent (the tool-call loop) + FastAPI app: POST /chat, GET /health
+data.py       # hardcoded order records (swap this for a real API later)
+tools.py      # get_order_status() + its OpenAI function-calling schema
+cli.py        # terminal REPL for local testing
 tests/
   test_tools.py
   test_agent.py
   test_server.py
 ```
 
+Flat, top-level modules rather than a package — no Dockerfile either.
+This matches what the hosting platform expects: it detects Python from
+`requirements.txt` and runs the process directly with the start command
+you configure (`python main.py`), so there's no build step to keep in
+sync with a separate container image.
+
 ## Setup
 
-Requires Python 3.11+.
+Requires Python 3.11 or 3.12 (avoid 3.13/3.14).
 
 ```bash
 python3 -m venv .venv
@@ -35,6 +39,7 @@ cp .env.example .env
 Edit `.env` (or export directly) and set:
 
 - `OPENAI_API_KEY` — required, your OpenAI API key.
+- `OPENAI_MODEL` — optional, defaults to `gpt-4o-mini`.
 - `PORT` — optional, defaults to `8000`. Used by the server.
 
 ## Running the CLI
@@ -43,7 +48,7 @@ For quick local multi-turn testing in the terminal:
 
 ```bash
 export OPENAI_API_KEY=sk-...
-python -m cs_order_agent.cli
+python cli.py
 ```
 
 Type an order number or question, and `quit`/`exit` to leave. Conversation
@@ -53,25 +58,15 @@ history is kept in memory for the life of the REPL session.
 
 ```bash
 export OPENAI_API_KEY=sk-...
-uvicorn cs_order_agent.server:app --host 0.0.0.0 --port 8000
+python main.py
+# → listening on http://localhost:8000
 ```
 
-or, for platforms that require a fixed start command:
+or directly with uvicorn:
 
 ```bash
 export OPENAI_API_KEY=sk-...
-python main.py
-```
-
-(`main.py` reads `PORT` from the environment the same way, defaulting to
-`8000` if it isn't set — it's just a thin wrapper around the same uvicorn
-call.)
-
-or with Docker:
-
-```bash
-docker build -t cs-order-agent .
-docker run -p 8000:8000 -e OPENAI_API_KEY=sk-... cs-order-agent
+uvicorn agent:app --host 0.0.0.0 --port 8000
 ```
 
 ### Sample request
@@ -98,20 +93,22 @@ Response:
 of the standard contract for compatibility with the hosting platform.
 
 Conversation history is kept server-side in memory, keyed by `session_id`
-(see `_sessions` in `server.py`). Send the same `session_id` on later
+(see `SESSIONS` in `agent.py`). Send the same `session_id` on later
 requests to continue that conversation. This means:
 
 - History does **not** survive a server restart.
 - History is **not** shared across replicas if you scale the server out
   horizontally — each replica has its own in-memory session store. For
-  multi-replica deployments, swap `_sessions` for a shared store (e.g.
+  multi-replica deployments, swap `SESSIONS` for a shared store (e.g.
   Redis) keyed the same way.
 
-`OrderStatusAgent.run()` itself remains stateless — it's only `server.py`
-that adds the session layer, to match the platform's contract.
+`OrderStatusAgent.run()` itself remains stateless — it's only the FastAPI
+layer in `agent.py` that adds the session store, to match the platform's
+contract.
 
-`GET /health` returns `{"status": "ok"}` and does not call the model, so it's
-safe to use as a liveness/readiness probe.
+`GET /health` returns `{"status": "ok"}` and does not call the model, so
+it's safe to use as a liveness/readiness probe. `GET /` returns a short
+service description.
 
 ## Tests
 
@@ -127,10 +124,10 @@ session continuity across requests, and error handling.
 
 ## Replacing the hardcoded data with a real backend
 
-All order data currently lives in `cs_order_agent/data.py` as an in-memory
-dict. The rest of the codebase — `agent.py`, `server.py`, `cli.py` — only
-ever calls `get_order_status()` from `tools.py` and never touches `data.py`
-directly, so swapping the backend means changing one function:
+All order data currently lives in `data.py` as an in-memory dict. The rest
+of the codebase — `agent.py`, `cli.py` — only ever calls
+`get_order_status()` from `tools.py` and never touches `data.py` directly,
+so swapping the backend means changing one function:
 
 1. In `tools.py`, replace the `ORDERS.get(normalized)` lookup inside
    `get_order_status()` with a call to the real order-management API/DB
@@ -143,7 +140,7 @@ directly, so swapping the backend means changing one function:
    raising — `get_order_status()` must still never raise.
 3. Delete or repurpose `data.py` once nothing references `ORDERS` directly.
 
-No changes are needed in `agent.py`, `server.py`, or `cli.py` — they only
-depend on the `get_order_status` function signature and
-`ORDER_STATUS_TOOL_SCHEMA`, both of which stay the same.
+No changes are needed in `agent.py` or `cli.py` — they only depend on the
+`get_order_status` function signature and `ORDER_STATUS_TOOL_SCHEMA`, both
+of which stay the same.
 # OrderStatusAgent

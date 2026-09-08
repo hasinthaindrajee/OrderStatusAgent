@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from cs_order_agent.agent import OrderStatusAgent
+from agent import OrderStatusAgent
 
 EXIT_COMMANDS = {"quit", "exit"}
 

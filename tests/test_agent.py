@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cs_order_agent.agent import MAX_TOOL_ITERATIONS, OrderStatusAgent
+from agent import MAX_TOOL_ITERATIONS, OrderStatusAgent
 
 
 @dataclass
@@ -75,7 +75,7 @@ def test_run_executes_tool_and_returns_final_text() -> None:
     tool_use_response = _tool_call_response("call_1", "CS-2026-100401")
     final_response = _text_response("Your order CS-2026-100401 was delivered on 2026-09-05.")
 
-    with patch("cs_order_agent.agent.OpenAI") as mock_openai_cls:
+    with patch("agent.OpenAI") as mock_openai_cls:
         mock_openai_cls.return_value = _client_with_responses([tool_use_response, final_response])
 
         agent = OrderStatusAgent(api_key="test-key")
@@ -101,7 +101,7 @@ def test_run_executes_tool_and_returns_final_text() -> None:
 def test_run_with_no_tool_call_returns_text_immediately() -> None:
     final_response = _text_response("Sure, what's your order number?")
 
-    with patch("cs_order_agent.agent.OpenAI") as mock_openai_cls:
+    with patch("agent.OpenAI") as mock_openai_cls:
         mock_openai_cls.return_value = _client_with_responses([final_response])
 
         agent = OrderStatusAgent(api_key="test-key")
@@ -116,7 +116,7 @@ def test_run_with_no_tool_call_returns_text_immediately() -> None:
 def test_run_is_stateless_and_accepts_prior_history() -> None:
     final_response = _text_response("Got it, thanks!")
 
-    with patch("cs_order_agent.agent.OpenAI") as mock_openai_cls:
+    with patch("agent.OpenAI") as mock_openai_cls:
         mock_openai_cls.return_value = _client_with_responses([final_response])
 
         agent = OrderStatusAgent(api_key="test-key")
@@ -134,7 +134,7 @@ def test_run_is_stateless_and_accepts_prior_history() -> None:
 def test_run_stops_after_max_iterations() -> None:
     responses = [_tool_call_response("call_x", "CS-2026-100401") for _ in range(MAX_TOOL_ITERATIONS)]
 
-    with patch("cs_order_agent.agent.OpenAI") as mock_openai_cls:
+    with patch("agent.OpenAI") as mock_openai_cls:
         client = _client_with_responses(responses)
         mock_openai_cls.return_value = client
 
@@ -151,7 +151,7 @@ def test_run_order_is_none_when_lookup_not_found() -> None:
     tool_use_response = _tool_call_response("call_1", "CS-2026-999999")
     final_response = _text_response("I couldn't find that order.")
 
-    with patch("cs_order_agent.agent.OpenAI") as mock_openai_cls:
+    with patch("agent.OpenAI") as mock_openai_cls:
         mock_openai_cls.return_value = _client_with_responses([tool_use_response, final_response])
 
         agent = OrderStatusAgent(api_key="test-key")

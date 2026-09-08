@@ -1,14 +1,34 @@
-"""OrderStatusAgent: an OpenAI tool-call loop over get_order_status()."""
+"""C&S Wholesale order-status agent — FastAPI service exposing POST /chat.
+
+Uses the OpenAI Chat Completions tool-calling API directly (no agent
+framework) to answer order-status questions, backed by hardcoded data in
+data.py.
+
+POST /chat only round-trips {message, session_id, context} -> {response},
+so conversation history lives here in memory, keyed by session_id, rather
+than being passed by the caller the way OrderStatusAgent.run() otherwise
+expects. This is lost on restart and isn't shared across replicas — swap
+SESSIONS for a shared store (e.g. Redis) if this needs to scale out.
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
+from pydantic import BaseModel
 
-from cs_order_agent.tools import ORDER_STATUS_TOOL_SCHEMA, get_order_status
+from tools import ORDER_STATUS_TOOL_SCHEMA, get_order_status
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("order_status_agent")
+
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 SYSTEM_PROMPT = """You are a customer service assistant for C&S Wholesale Grocers, \
 helping customers check the status of their orders.
@@ -39,7 +59,7 @@ MAX_TOOL_ITERATIONS = 5
 class OrderStatusAgent:
     """Stateless wrapper around the OpenAI Chat Completions tool-call loop."""
 
-    def __init__(self, api_key: str | None = None, model: str = "gpt-4o-mini") -> None:
+    def __init__(self, api_key: str | None = None, model: str = OPENAI_MODEL) -> None:
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not resolved_key:
             raise ValueError(
@@ -65,8 +85,6 @@ class OrderStatusAgent:
         The returned dict includes `order`: the full structured order record
         (every field from data.py, not just status) from the most recent
         successful lookup this turn, or None if no order was found/looked up.
-        This lets API consumers render order details without parsing the
-        natural-language reply.
         """
         history: list[dict[str, Any]] = list(conversation_history) if conversation_history else []
         history.append({"role": "user", "content": user_message})
@@ -165,3 +183,70 @@ def _serialize_assistant_message(message: Any) -> dict[str, Any]:
             for tool_call in message.tool_calls
         ]
     return serialized
+
+
+# --- FastAPI service --------------------------------------------------------
+
+_agent: OrderStatusAgent | None = None
+SESSIONS: dict[str, list[dict[str, Any]]] = {}
+_DEFAULT_SESSION_ID = "default"
+
+app = FastAPI(title="C&S Wholesale Order Status Agent")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+class ChatRequest(BaseModel):
+    message: str | None = None
+    session_id: str | None = None
+    context: Any | None = None
+
+
+class ChatResponse(BaseModel):
+    response: str
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    global _agent
+    _agent = OrderStatusAgent()
+
+
+@app.get("/")
+def root() -> dict[str, Any]:
+    return {
+        "service": "C&S Wholesale Order Status Agent",
+        "tip": "POST /chat with {message, session_id, context}. GET /health for status.",
+    }
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(request: ChatRequest) -> ChatResponse:
+    if not request.message or not request.message.strip():
+        raise HTTPException(status_code=400, detail="'message' is required and cannot be empty.")
+
+    assert _agent is not None, "agent was not initialized at startup"
+
+    session_id = request.session_id or _DEFAULT_SESSION_ID
+    history = SESSIONS.get(session_id)
+
+    try:
+        result = _agent.run(user_message=request.message, conversation_history=history)
+    except Exception:
+        log.exception("OrderStatusAgent failed while handling /chat request")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while processing your request. Please try again.",
+        ) from None
+
+    SESSIONS[session_id] = result["conversation_history"]
+    return ChatResponse(response=result["reply"])

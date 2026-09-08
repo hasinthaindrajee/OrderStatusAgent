@@ -1,8 +1,8 @@
 """The order-status tool exposed to the agent.
 
 get_order_status() is the only function the agent ever calls. It is a thin
-lookup wrapper around cs_order_agent.data — swapping the hardcoded dict for
-a real order-management API means changing data.py (or replacing the lookup
+lookup wrapper around data.py — swapping the hardcoded dict for a real
+order-management API means changing data.py (or replacing the lookup
 inside this function) without touching agent.py at all.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from cs_order_agent.data import ORDERS
+from data import ORDERS
 
 _ORDER_CORE_RE = re.compile(r"^\d{4}\d{6}$")
 

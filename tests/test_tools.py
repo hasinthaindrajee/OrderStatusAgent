@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from cs_order_agent.data import ORDERS
-from cs_order_agent.tools import get_order_status
+from data import ORDERS
+from tools import get_order_status
 
 ALL_STATUSES = {
     "RECEIVED",

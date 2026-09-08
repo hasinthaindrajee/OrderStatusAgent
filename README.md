@@ -8,6 +8,7 @@ hardcoded data.
 ## Project layout
 
 ```
+main.py       # `python main.py` entry point (for platforms that require it)
 cs_order_agent/
   data.py     # hardcoded order records (swap this for a real API later)
   tools.py    # get_order_status() + its OpenAI function-calling schema
@@ -54,6 +55,17 @@ history is kept in memory for the life of the REPL session.
 export OPENAI_API_KEY=sk-...
 uvicorn cs_order_agent.server:app --host 0.0.0.0 --port 8000
 ```
+
+or, for platforms that require a fixed start command:
+
+```bash
+export OPENAI_API_KEY=sk-...
+python main.py
+```
+
+(`main.py` reads `PORT` from the environment the same way, defaulting to
+`8000` if it isn't set — it's just a thin wrapper around the same uvicorn
+call.)
 
 or with Docker:
 

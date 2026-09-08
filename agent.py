@@ -87,6 +87,12 @@ class OrderStatusAgent:
         self._client = OpenAI(api_key=resolved_key, base_url=base_url)
         self._model = model
 
+        # For logging only — never the raw key. Lets a failed request's log
+        # line show exactly which endpoint/key combination was in effect,
+        # without scrolling back to find the startup log.
+        self.masked_api_key = _mask_key(resolved_key)
+        self.base_url_label = base_url or "(OpenAI default)"
+
         if base_url:
             # Routing through a custom endpoint (e.g. an LLM gateway/proxy)
             # instead of OpenAI directly. These typically expect their own
@@ -299,10 +305,16 @@ def chat(request: ChatRequest) -> ChatResponse:
         result = _agent.run(user_message=request.message, conversation_history=history)
     except Exception as exc:
         # A compact single-line summary first, in case a log viewer truncates
-        # or reorders the full traceback that follows.
+        # or reorders the full traceback that follows. Includes which
+        # endpoint/key combination was actually in effect (key masked to
+        # its last 4 characters — never log the raw key) so an auth failure
+        # is diagnosable without cross-referencing the startup log.
         log.error(
-            "OrderStatusAgent failed while handling /chat request (session=%s): %s: %s",
+            "OrderStatusAgent failed while handling /chat request "
+            "(session=%s, base_url=%s, api_key=%s): %s: %s",
             session_id,
+            _agent.base_url_label,
+            _agent.masked_api_key,
             type(exc).__name__,
             exc,
         )

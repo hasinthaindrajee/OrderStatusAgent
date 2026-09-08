@@ -60,9 +60,13 @@ On startup the server logs the effective model, `OPENAI_URL` (or "OpenAI
 default"), and a masked `OPENAI_API_KEY` (last 4 characters only) — check
 this first when a deployed instance behaves unexpectedly, to confirm it
 picked up the environment variables you think it did. A failed `/chat`
-request logs a compact one-line summary (exception type + message) before
-the full traceback, so the cause is visible even if a log viewer
-truncates or reorders multi-line output.
+request logs a compact one-line summary — exception type + message, plus
+the same `base_url`/masked-key pair that was actually in effect for that
+request — before the full traceback, so the cause is diagnosable from
+that one line alone even if a log viewer truncates or reorders
+multi-line output, or if you're not sure the deployment picked up a
+recent env var change. The key is always masked to its last 4
+characters; the full key is never logged.
 
 ## Running the CLI
 

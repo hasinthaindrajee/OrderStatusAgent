@@ -17,6 +17,7 @@ cs_order_agent/
 tests/
   test_tools.py
   test_agent.py
+  test_server.py
 ```
 
 ## Setup
@@ -33,7 +34,7 @@ cp .env.example .env
 Edit `.env` (or export directly) and set:
 
 - `OPENAI_API_KEY` — required, your OpenAI API key.
-- `PORT` — optional, defaults to `8080`. Used by the server.
+- `PORT` — optional, defaults to `8000`. Used by the server.
 
 ## Running the CLI
 
@@ -51,50 +52,51 @@ history is kept in memory for the life of the REPL session.
 
 ```bash
 export OPENAI_API_KEY=sk-...
-uvicorn cs_order_agent.server:app --host 0.0.0.0 --port 8080
+uvicorn cs_order_agent.server:app --host 0.0.0.0 --port 8000
 ```
 
 or with Docker:
 
 ```bash
 docker build -t cs-order-agent .
-docker run -p 8080:8080 -e OPENAI_API_KEY=sk-... cs-order-agent
+docker run -p 8000:8000 -e OPENAI_API_KEY=sk-... cs-order-agent
 ```
 
 ### Sample request
 
+The server implements a standard "Chat Agent" HTTP contract:
+`POST /chat` takes `{message, session_id, context}` and returns
+`{response}`.
+
 ```bash
-curl -X POST http://localhost:8080/chat \
+curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "What is the status of order CS-2026-100563?"}'
+  -d '{"message": "What is the status of order CS-2026-100563?", "session_id": "demo-session-1"}'
 ```
 
 Response:
 
 ```json
 {
-  "reply": "Order CS-2026-100563 is currently in transit...",
-  "conversation_history": [ ... ],
-  "tools_called": [ ... ],
-  "order": {
-    "order_number": "CS-2026-100563",
-    "customer_name": "Tops Friendly Markets #029",
-    "status": "IN_TRANSIT",
-    "carrier": "Estes Express Lines",
-    "tracking_number": "EXL9928374615",
-    "...": "..."
-  }
+  "response": "Order CS-2026-100563 is currently in transit..."
 }
 ```
 
-`order` is the full structured order record (every field from `data.py`) for
-the most recent successful lookup in that turn, or `null` if no order was
-found or looked up — use it to render order details in a UI without parsing
-the natural-language `reply`.
+`context` is accepted (any JSON value) but not currently used — it's part
+of the standard contract for compatibility with the hosting platform.
 
-Pass the returned `conversation_history` back in on the next call (as
-`conversation_history` in the request body) to continue the conversation —
-the server and the agent are both stateless between requests.
+Conversation history is kept server-side in memory, keyed by `session_id`
+(see `_sessions` in `server.py`). Send the same `session_id` on later
+requests to continue that conversation. This means:
+
+- History does **not** survive a server restart.
+- History is **not** shared across replicas if you scale the server out
+  horizontally — each replica has its own in-memory session store. For
+  multi-replica deployments, swap `_sessions` for a shared store (e.g.
+  Redis) keyed the same way.
+
+`OrderStatusAgent.run()` itself remains stateless — it's only `server.py`
+that adds the session layer, to match the platform's contract.
 
 `GET /health` returns `{"status": "ok"}` and does not call the model, so it's
 safe to use as a liveness/readiness probe.
@@ -108,6 +110,8 @@ python -m pytest
 `test_tools.py` covers every order status, unknown orders, malformed input,
 and order-number normalization variants. `test_agent.py` mocks the OpenAI
 client, so the tool-call loop is tested without any live API calls.
+`test_server.py` mocks `OrderStatusAgent` and covers the `/chat` contract,
+session continuity across requests, and error handling.
 
 ## Replacing the hardcoded data with a real backend
 

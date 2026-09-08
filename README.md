@@ -48,6 +48,21 @@ Edit `.env` (or export directly) and set:
   rather than OpenAI's. Left unset, requests go straight to OpenAI with
   its normal `Authorization: Bearer` header.
 - `PORT` — optional, defaults to `8000`. Used by the server.
+- `LOG_LEVEL` — optional, defaults to `INFO`. Set to `DEBUG` to also log
+  each `/chat` request's message and session, the response's tool calls
+  and whether an order was found, and the OpenAI SDK's own HTTP-level
+  debug logs (request/response headers, with the API key masked) —
+  useful when debugging against a gateway/proxy deployment where you
+  can't attach a local debugger. This is verbose; leave it at `INFO`
+  normally.
+
+On startup the server logs the effective model, `OPENAI_URL` (or "OpenAI
+default"), and a masked `OPENAI_API_KEY` (last 4 characters only) — check
+this first when a deployed instance behaves unexpectedly, to confirm it
+picked up the environment variables you think it did. A failed `/chat`
+request logs a compact one-line summary (exception type + message) before
+the full traceback, so the cause is visible even if a log viewer
+truncates or reorders multi-line output.
 
 ## Running the CLI
 

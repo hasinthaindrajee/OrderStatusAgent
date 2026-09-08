@@ -25,11 +25,20 @@ from pydantic import BaseModel
 
 from tools import ORDER_STATUS_TOOL_SCHEMA, get_order_status
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("order_status_agent")
 
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_URL = os.environ.get("OPENAI_URL")
+
+
+def _mask_key(key: str | None) -> str:
+    if not key:
+        return "<missing>"
+    if len(key) <= 4:
+        return "****"
+    return f"...{key[-4:]}"
 
 SYSTEM_PROMPT = """You are a customer service assistant for C&S Wholesale Grocers, \
 helping customers check the status of their orders.
@@ -234,7 +243,19 @@ class ChatResponse(BaseModel):
 @app.on_event("startup")
 def _startup() -> None:
     global _agent
-    _agent = OrderStatusAgent()
+    log.info(
+        "Starting order-status agent: model=%s base_url=%s openai_api_key=%s log_level=%s",
+        OPENAI_MODEL,
+        OPENAI_URL or "(OpenAI default)",
+        _mask_key(os.environ.get("OPENAI_API_KEY")),
+        LOG_LEVEL,
+    )
+    try:
+        _agent = OrderStatusAgent()
+    except Exception:
+        log.exception("Failed to initialize OrderStatusAgent at startup")
+        raise
+    log.info("Order-status agent ready.")
 
 
 @app.get("/")
@@ -260,14 +281,35 @@ def chat(request: ChatRequest) -> ChatResponse:
     session_id = request.session_id or _DEFAULT_SESSION_ID
     history = SESSIONS.get(session_id)
 
+    log.debug(
+        "chat request: session=%s history_turns=%s message=%r",
+        session_id,
+        len(history) if history else 0,
+        request.message,
+    )
+
     try:
         result = _agent.run(user_message=request.message, conversation_history=history)
-    except Exception:
-        log.exception("OrderStatusAgent failed while handling /chat request")
+    except Exception as exc:
+        # A compact single-line summary first, in case a log viewer truncates
+        # or reorders the full traceback that follows.
+        log.error(
+            "OrderStatusAgent failed while handling /chat request (session=%s): %s: %s",
+            session_id,
+            type(exc).__name__,
+            exc,
+        )
+        log.exception("Full traceback for the error above:")
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while processing your request. Please try again.",
         ) from None
 
     SESSIONS[session_id] = result["conversation_history"]
+    log.debug(
+        "chat response: session=%s tools_called=%s order_found=%s",
+        session_id,
+        [call["name"] for call in result["tools_called"]],
+        result["order"] is not None,
+    )
     return ChatResponse(response=result["reply"])

@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from openai import OpenAI
+from openai import OpenAI, Omit
 from pydantic import BaseModel
 
 from tools import ORDER_STATUS_TOOL_SCHEMA, get_order_status
@@ -72,9 +72,22 @@ class OrderStatusAgent:
                 "No OpenAI API key found. Pass api_key explicitly or set "
                 "the OPENAI_API_KEY environment variable."
             )
-        # base_url=None lets the OpenAI SDK fall back to its own default
-        # (https://api.openai.com/v1) — only override it when OPENAI_URL is set.
-        self._client = OpenAI(api_key=resolved_key, base_url=base_url)
+
+        if base_url:
+            # Routing through a custom endpoint (e.g. an LLM gateway/proxy)
+            # instead of OpenAI directly. These gateways typically expect
+            # their own API key header rather than OpenAI's
+            # "Authorization: Bearer" scheme, so swap it out: Omit() drops
+            # the SDK's default Authorization header entirely.
+            self._client = OpenAI(
+                api_key=resolved_key,
+                base_url=base_url,
+                default_headers={"Authorization": Omit(), "X-API-Key": resolved_key},
+            )
+        else:
+            # base_url=None lets the OpenAI SDK use its own default
+            # (https://api.openai.com/v1) with its normal auth header.
+            self._client = OpenAI(api_key=resolved_key)
         self._model = model
 
     def run(

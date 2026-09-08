@@ -71,19 +71,29 @@ def test_missing_api_key_raises() -> None:
             OrderStatusAgent()
 
 
-def test_default_base_url_is_not_overridden() -> None:
+def test_default_base_url_uses_openais_own_client_config() -> None:
     with patch("agent.OpenAI") as mock_openai_cls:
         OrderStatusAgent(api_key="test-key")
 
-    # base_url=None lets the OpenAI SDK use its own default endpoint.
-    assert mock_openai_cls.call_args.kwargs["base_url"] is None
+    # No base_url or default_headers override — the OpenAI SDK uses its own
+    # default endpoint (https://api.openai.com/v1) and Authorization header.
+    kwargs = mock_openai_cls.call_args.kwargs
+    assert "base_url" not in kwargs
+    assert "default_headers" not in kwargs
 
 
-def test_explicit_base_url_is_passed_to_client() -> None:
+def test_custom_base_url_swaps_auth_header_for_x_api_key() -> None:
     with patch("agent.OpenAI") as mock_openai_cls:
         OrderStatusAgent(api_key="test-key", base_url="https://llm-gateway.example.com/v1")
 
-    assert mock_openai_cls.call_args.kwargs["base_url"] == "https://llm-gateway.example.com/v1"
+    kwargs = mock_openai_cls.call_args.kwargs
+    assert kwargs["base_url"] == "https://llm-gateway.example.com/v1"
+    assert kwargs["default_headers"]["X-API-Key"] == "test-key"
+    # The default OpenAI "Authorization: Bearer ..." header must be dropped
+    # in favor of X-API-Key when routing through a custom gateway/proxy.
+    from openai import Omit
+
+    assert isinstance(kwargs["default_headers"]["Authorization"], Omit)
 
 
 def test_run_executes_tool_and_returns_final_text() -> None:

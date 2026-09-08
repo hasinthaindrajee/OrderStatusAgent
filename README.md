@@ -42,7 +42,11 @@ Edit `.env` (or export directly) and set:
 - `OPENAI_MODEL` — optional, defaults to `gpt-4o-mini`.
 - `OPENAI_URL` — optional, defaults to OpenAI's own API (`https://api.openai.com/v1`).
   Set this to point at a compatible endpoint instead — e.g. an LLM gateway
-  or proxy in front of OpenAI.
+  or proxy in front of OpenAI. When set, `OPENAI_API_KEY` is sent as an
+  `X-API-Key` header instead of OpenAI's own `Authorization: Bearer`
+  scheme, since gateways/proxies typically expect their own key header
+  rather than OpenAI's. Left unset, requests go straight to OpenAI with
+  its normal `Authorization: Bearer` header.
 - `PORT` — optional, defaults to `8000`. Used by the server.
 
 ## Running the CLI

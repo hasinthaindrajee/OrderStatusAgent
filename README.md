@@ -1,4 +1,4 @@
-# C&S Wholesale Order Status Agent
+# Wholesale Order Status Agent
 
 A small agent that answers order-status questions in natural language for
 C&S Wholesale Grocers customers. It uses the OpenAI Chat Completions API

@@ -71,6 +71,21 @@ def test_missing_api_key_raises() -> None:
             OrderStatusAgent()
 
 
+def test_default_base_url_is_not_overridden() -> None:
+    with patch("agent.OpenAI") as mock_openai_cls:
+        OrderStatusAgent(api_key="test-key")
+
+    # base_url=None lets the OpenAI SDK use its own default endpoint.
+    assert mock_openai_cls.call_args.kwargs["base_url"] is None
+
+
+def test_explicit_base_url_is_passed_to_client() -> None:
+    with patch("agent.OpenAI") as mock_openai_cls:
+        OrderStatusAgent(api_key="test-key", base_url="https://llm-gateway.example.com/v1")
+
+    assert mock_openai_cls.call_args.kwargs["base_url"] == "https://llm-gateway.example.com/v1"
+
+
 def test_run_executes_tool_and_returns_final_text() -> None:
     tool_use_response = _tool_call_response("call_1", "CS-2026-100401")
     final_response = _text_response("Your order CS-2026-100401 was delivered on 2026-09-05.")

@@ -29,6 +29,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("order_status_agent")
 
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_URL = os.environ.get("OPENAI_URL")
 
 SYSTEM_PROMPT = """You are a customer service assistant for C&S Wholesale Grocers, \
 helping customers check the status of their orders.
@@ -59,14 +60,21 @@ MAX_TOOL_ITERATIONS = 5
 class OrderStatusAgent:
     """Stateless wrapper around the OpenAI Chat Completions tool-call loop."""
 
-    def __init__(self, api_key: str | None = None, model: str = OPENAI_MODEL) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = OPENAI_MODEL,
+        base_url: str | None = OPENAI_URL,
+    ) -> None:
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not resolved_key:
             raise ValueError(
                 "No OpenAI API key found. Pass api_key explicitly or set "
                 "the OPENAI_API_KEY environment variable."
             )
-        self._client = OpenAI(api_key=resolved_key)
+        # base_url=None lets the OpenAI SDK fall back to its own default
+        # (https://api.openai.com/v1) — only override it when OPENAI_URL is set.
+        self._client = OpenAI(api_key=resolved_key, base_url=base_url)
         self._model = model
 
     def run(

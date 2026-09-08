@@ -40,6 +40,9 @@ Edit `.env` (or export directly) and set:
 
 - `OPENAI_API_KEY` — required, your OpenAI API key.
 - `OPENAI_MODEL` — optional, defaults to `gpt-4o-mini`.
+- `OPENAI_URL` — optional, defaults to OpenAI's own API (`https://api.openai.com/v1`).
+  Set this to point at a compatible endpoint instead — e.g. an LLM gateway
+  or proxy in front of OpenAI.
 - `PORT` — optional, defaults to `8000`. Used by the server.
 
 ## Running the CLI

@@ -170,12 +170,12 @@ class OrderStatusAgent:
             # method" even though the header ends up correct either way.
             self._extra_headers: dict[str, Any] | None = {
                 "Authorization": Omit(),
-                "X-API-Key": resolved_key,
+                "API-Key": resolved_key,
             }
             # Same headers, but with the key masked — safe to put in logs.
             self._loggable_extra_headers = {
                 "Authorization": "<omitted>",
-                "X-API-Key": self.masked_api_key,
+                "API-Key": self.masked_api_key,
             }
         else:
             self._extra_headers = None

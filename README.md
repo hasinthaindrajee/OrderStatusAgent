@@ -57,23 +57,36 @@ Edit `.env` (or export directly) and set:
   normally.
 
 On startup the server logs the effective model, `OPENAI_URL` (or "OpenAI
-default"), and a masked `OPENAI_API_KEY` — check this first when a
-deployed instance behaves unexpectedly, to confirm it picked up the
-environment variables you think it did. A failed `/chat` request logs a
-compact one-line summary — exception type + message, plus the same
-`base_url`/masked-key pair that was actually in effect for that
-request — before the full traceback, so the cause is diagnosable from
-that one line alone even if a log viewer truncates or reorders
-multi-line output, or if you're not sure the deployment picked up a
-recent env var change. At `LOG_LEVEL=DEBUG`, each outbound request also
-logs the exact headers being sent (e.g. `Authorization: <omitted>,
+default"), a masked `OPENAI_API_KEY`, and an `api_key_fingerprint` — check
+this first when a deployed instance behaves unexpectedly, to confirm it
+picked up the environment variables you think it did. A failed `/chat`
+request logs a compact one-line summary — exception type + message, plus
+the same `base_url`/masked-key/fingerprint that was actually in effect
+for that request — before the full traceback, so the cause is
+diagnosable from that one line alone even if a log viewer truncates or
+reorders multi-line output. At `LOG_LEVEL=DEBUG`, each outbound request
+also logs the exact headers being sent (e.g. `Authorization: <omitted>,
 X-API-Key: sk-proj...ab3f` when routed through a custom `OPENAI_URL`) —
 useful for confirming exactly what's on the wire when a gateway rejects
-a request. The key is masked in all of these (first 6 + last 4
-characters) — the full key is never logged, intentionally: this app may
-run on a shared platform where log access is broader than just you, and
-logs often get retained or shipped elsewhere. To check a key's exact
-value, use whatever secret store/vault you set it from — not app logs.
+a request.
+
+The key itself is never logged in full — only masked (first 6 + last 4
+characters) or as a short SHA-256 `api_key_fingerprint`. This app may run
+on a shared platform where log access is broader than just you, and logs
+often get retained or shipped elsewhere, so a full key is never worth the
+risk. The fingerprint still lets you confirm with certainty whether a
+deployed key is identical to one you already have, without ever exposing
+either value — compute the same fingerprint locally for the key you
+expect and compare:
+
+```bash
+echo -n "$OPENAI_API_KEY" | shasum -a 256 | cut -c1-12
+```
+
+If it matches the fingerprint in the logs, the deployed key is that
+exact value; if not, the deployment has a different key than you think —
+fix that by setting the correct value on the platform and redeploying,
+not by trying to read the wrong one back out.
 
 ## Running the CLI
 

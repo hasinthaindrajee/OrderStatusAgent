@@ -13,6 +13,7 @@ SESSIONS for a shared store (e.g. Redis) if this needs to scale out.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -41,6 +42,19 @@ def _mask_key(key: str | None) -> str:
     if len(key) <= 10:
         return f"...{key[-4:]}"
     return f"{key[:6]}...{key[-4:]}"
+
+
+def _key_fingerprint(key: str | None) -> str:
+    """A short SHA-256 fingerprint of a secret, safe to log.
+
+    Two keys produce the same fingerprint only if they're byte-for-byte
+    identical, so this lets you confirm a deployed key matches a known-good
+    one (compute the same fingerprint locally and compare) without ever
+    exposing the actual value: `echo -n "$KEY" | shasum -a 256 | cut -c1-12`.
+    """
+    if not key:
+        return "<missing>"
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 SYSTEM_PROMPT = """You are a customer service assistant for C&S Wholesale Grocers, \
 helping customers check the status of their orders.
@@ -91,8 +105,12 @@ class OrderStatusAgent:
 
         # For logging only — never the raw key. Lets a failed request's log
         # line show exactly which endpoint/key combination was in effect,
-        # without scrolling back to find the startup log.
+        # without scrolling back to find the startup log. api_key_fingerprint
+        # lets you confirm byte-for-byte whether a deployed key matches a
+        # known-good one, without ever exposing the actual value — compute
+        # the same fingerprint locally: echo -n "$KEY" | shasum -a 256 | cut -c1-12
         self.masked_api_key = _mask_key(resolved_key)
+        self.api_key_fingerprint = _key_fingerprint(resolved_key)
         self.base_url_label = base_url or "(OpenAI default)"
 
         if base_url:
@@ -270,10 +288,12 @@ class ChatResponse(BaseModel):
 def _startup() -> None:
     global _agent
     log.info(
-        "Starting order-status agent: model=%s base_url=%s openai_api_key=%s log_level=%s",
+        "Starting order-status agent: model=%s base_url=%s openai_api_key=%s "
+        "api_key_fingerprint=%s log_level=%s",
         OPENAI_MODEL,
         OPENAI_URL or "(OpenAI default)",
         _mask_key(os.environ.get("OPENAI_API_KEY")),
+        _key_fingerprint(os.environ.get("OPENAI_API_KEY")),
         LOG_LEVEL,
     )
     try:
@@ -319,15 +339,18 @@ def chat(request: ChatRequest) -> ChatResponse:
     except Exception as exc:
         # A compact single-line summary first, in case a log viewer truncates
         # or reorders the full traceback that follows. Includes which
-        # endpoint/key combination was actually in effect (key masked to
-        # its last 4 characters — never log the raw key) so an auth failure
-        # is diagnosable without cross-referencing the startup log.
+        # endpoint/key combination was actually in effect — key masked, plus
+        # a fingerprint you can compare against a known-good key computed
+        # locally (see _key_fingerprint) — so an auth failure is
+        # diagnosable without cross-referencing the startup log or ever
+        # exposing the actual key value.
         log.error(
             "OrderStatusAgent failed while handling /chat request "
-            "(session=%s, base_url=%s, api_key=%s): %s: %s",
+            "(session=%s, base_url=%s, api_key=%s, api_key_fingerprint=%s): %s: %s",
             session_id,
             _agent.base_url_label,
             _agent.masked_api_key,
+            _agent.api_key_fingerprint,
             type(exc).__name__,
             exc,
         )

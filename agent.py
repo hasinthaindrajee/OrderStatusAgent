@@ -44,6 +44,23 @@ def _mask_key(key: str | None) -> str:
     return f"{key[:6]}...{key[-4:]}"
 
 
+def _resolve_api_key(explicit: str | None) -> tuple[str | None, str]:
+    """Resolve the OpenAI/gateway API key and where it came from.
+
+    AGENT_OPENAI_API_KEY takes priority over OPENAI_API_KEY. This exists as
+    an override escape hatch for platforms that auto-manage or auto-inject
+    OPENAI_API_KEY themselves (e.g. from their own secret store) in a way
+    you can't directly control — set AGENT_OPENAI_API_KEY instead and it
+    always wins, regardless of what OPENAI_API_KEY ends up being.
+    """
+    if explicit:
+        return explicit, "explicit api_key argument"
+    override = os.environ.get("AGENT_OPENAI_API_KEY")
+    if override:
+        return override, "AGENT_OPENAI_API_KEY"
+    return os.environ.get("OPENAI_API_KEY"), "OPENAI_API_KEY"
+
+
 def _key_fingerprint(key: str | None) -> str:
     """A short SHA-256 fingerprint of a secret, safe to log.
 
@@ -91,12 +108,37 @@ class OrderStatusAgent:
         model: str = OPENAI_MODEL,
         base_url: str | None = OPENAI_URL,
     ) -> None:
-        resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not resolved_key:
+        raw_key, key_source = _resolve_api_key(api_key)
+        if not raw_key:
             raise ValueError(
-                "No OpenAI API key found. Pass api_key explicitly or set "
-                "the OPENAI_API_KEY environment variable."
+                "No OpenAI API key found. Pass api_key explicitly, or set "
+                "AGENT_OPENAI_API_KEY (takes priority — a safe override if "
+                "the platform manages OPENAI_API_KEY itself) or OPENAI_API_KEY."
             )
+
+        # Some platforms mount secrets as files and expose them as env vars
+        # verbatim, trailing newline/whitespace included — which silently
+        # changes the value's identity (and its fingerprint) without
+        # changing how it looks when printed. Strip defensively, and log
+        # when this actually happened so a mismatch like that is visible
+        # rather than a mysterious "wrong key" that isn't actually wrong.
+        resolved_key = raw_key.strip()
+        if resolved_key != raw_key:
+            log.warning(
+                "%s had leading/trailing whitespace stripped (raw_len=%s, "
+                "stripped_len=%s, raw_fingerprint=%s, stripped_fingerprint=%s) "
+                "— the platform may be injecting it with extra characters "
+                "(e.g. a trailing newline from a mounted secret file). "
+                "Compare stripped_fingerprint against your known-good key's "
+                "fingerprint.",
+                key_source,
+                len(raw_key),
+                len(resolved_key),
+                _key_fingerprint(raw_key),
+                _key_fingerprint(resolved_key),
+            )
+        if base_url:
+            base_url = base_url.strip()
 
         # base_url=None lets the OpenAI SDK use its own default endpoint
         # (https://api.openai.com/v1).
@@ -111,6 +153,8 @@ class OrderStatusAgent:
         # the same fingerprint locally: echo -n "$KEY" | shasum -a 256 | cut -c1-12
         self.masked_api_key = _mask_key(resolved_key)
         self.api_key_fingerprint = _key_fingerprint(resolved_key)
+        self.api_key_length = len(resolved_key)
+        self.api_key_source = key_source
         self.base_url_label = base_url or "(OpenAI default)"
 
         if base_url:
@@ -287,21 +331,25 @@ class ChatResponse(BaseModel):
 @app.on_event("startup")
 def _startup() -> None:
     global _agent
-    log.info(
-        "Starting order-status agent: model=%s base_url=%s openai_api_key=%s "
-        "api_key_fingerprint=%s log_level=%s",
-        OPENAI_MODEL,
-        OPENAI_URL or "(OpenAI default)",
-        _mask_key(os.environ.get("OPENAI_API_KEY")),
-        _key_fingerprint(os.environ.get("OPENAI_API_KEY")),
-        LOG_LEVEL,
-    )
+    log.info("Starting order-status agent: log_level=%s", LOG_LEVEL)
     try:
         _agent = OrderStatusAgent()
     except Exception:
         log.exception("Failed to initialize OrderStatusAgent at startup")
         raise
-    log.info("Order-status agent ready.")
+    # Logged from the agent's own (post-stripping) attributes, so this
+    # reflects the value actually in effect — not just what the raw env
+    # var looked like before any whitespace was stripped from it.
+    log.info(
+        "Order-status agent ready: model=%s base_url=%s openai_api_key=%s "
+        "api_key_length=%s api_key_fingerprint=%s api_key_source=%s",
+        OPENAI_MODEL,
+        _agent.base_url_label,
+        _agent.masked_api_key,
+        _agent.api_key_length,
+        _agent.api_key_fingerprint,
+        _agent.api_key_source,
+    )
 
 
 @app.get("/")
@@ -346,11 +394,14 @@ def chat(request: ChatRequest) -> ChatResponse:
         # exposing the actual key value.
         log.error(
             "OrderStatusAgent failed while handling /chat request "
-            "(session=%s, base_url=%s, api_key=%s, api_key_fingerprint=%s): %s: %s",
+            "(session=%s, base_url=%s, api_key=%s, api_key_length=%s, "
+            "api_key_fingerprint=%s, api_key_source=%s): %s: %s",
             session_id,
             _agent.base_url_label,
             _agent.masked_api_key,
+            _agent.api_key_length,
             _agent.api_key_fingerprint,
+            _agent.api_key_source,
             type(exc).__name__,
             exc,
         )

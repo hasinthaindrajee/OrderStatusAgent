@@ -38,7 +38,14 @@ cp .env.example .env
 
 Edit `.env` (or export directly) and set:
 
-- `OPENAI_API_KEY` — required, your OpenAI API key.
+- `OPENAI_API_KEY` — required (unless `AGENT_OPENAI_API_KEY` is set), your
+  OpenAI API key.
+- `AGENT_OPENAI_API_KEY` — optional override that takes priority over
+  `OPENAI_API_KEY` when set. Useful on platforms that auto-manage or
+  auto-inject `OPENAI_API_KEY` themselves (from their own secret store,
+  a reserved variable name, etc.) in a way you can't directly control —
+  set this instead and it always wins, regardless of what
+  `OPENAI_API_KEY` ends up being at runtime.
 - `OPENAI_MODEL` — optional, defaults to `gpt-4o-mini`.
 - `OPENAI_URL` — optional, defaults to OpenAI's own API (`https://api.openai.com/v1`).
   Set this to point at a compatible endpoint instead — e.g. an LLM gateway
@@ -57,18 +64,26 @@ Edit `.env` (or export directly) and set:
   normally.
 
 On startup the server logs the effective model, `OPENAI_URL` (or "OpenAI
-default"), a masked `OPENAI_API_KEY`, and an `api_key_fingerprint` — check
-this first when a deployed instance behaves unexpectedly, to confirm it
-picked up the environment variables you think it did. A failed `/chat`
-request logs a compact one-line summary — exception type + message, plus
-the same `base_url`/masked-key/fingerprint that was actually in effect
-for that request — before the full traceback, so the cause is
-diagnosable from that one line alone even if a log viewer truncates or
-reorders multi-line output. At `LOG_LEVEL=DEBUG`, each outbound request
-also logs the exact headers being sent (e.g. `Authorization: <omitted>,
-X-API-Key: sk-proj...ab3f` when routed through a custom `OPENAI_URL`) —
-useful for confirming exactly what's on the wire when a gateway rejects
-a request.
+default"), a masked `OPENAI_API_KEY`, its length, an `api_key_fingerprint`,
+and `api_key_source` (`OPENAI_API_KEY`, `AGENT_OPENAI_API_KEY`, or
+`explicit api_key argument`) — check this first when a deployed instance
+behaves unexpectedly, to confirm it picked up the environment variables
+you think it did, and which variable actually supplied the key in use. A
+failed `/chat` request logs the same fields in a compact one-line
+summary — exception type + message included — before the full traceback,
+so the cause is diagnosable from that one line alone even if a log
+viewer truncates or reorders multi-line output. At `LOG_LEVEL=DEBUG`,
+each outbound request also logs the exact headers being sent (e.g.
+`Authorization: <omitted>, X-API-Key: sk-proj...ab3f` when routed
+through a custom `OPENAI_URL`) — useful for confirming exactly what's on
+the wire when a gateway rejects a request.
+
+If the resolved key had leading/trailing whitespace stripped (common
+when a platform mounts a secret as a file and exposes it as an env var
+verbatim, trailing newline included — which silently changes the key's
+identity without changing how it looks when printed), a `WARNING` line
+logs the raw and stripped lengths and fingerprints so that's visible
+too.
 
 The key itself is never logged in full — only masked (first 6 + last 4
 characters) or as a short SHA-256 `api_key_fingerprint`. This app may run

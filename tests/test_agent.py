@@ -66,9 +66,60 @@ def test_missing_api_key_raises() -> None:
 
     env = dict(os.environ)
     env.pop("OPENAI_API_KEY", None)
+    env.pop("AGENT_OPENAI_API_KEY", None)
     with patch.dict(os.environ, env, clear=True):
         with pytest.raises(ValueError):
             OrderStatusAgent()
+
+
+def test_agent_openai_api_key_overrides_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # OPENAI_API_KEY is already set to "test-key-123" by the autouse fixture.
+    monkeypatch.setenv("AGENT_OPENAI_API_KEY", "override-key-456")
+
+    with patch("agent.OpenAI") as mock_openai_cls:
+        agent_obj = OrderStatusAgent()
+
+    assert mock_openai_cls.call_args.kwargs["api_key"] == "override-key-456"
+    assert agent_obj.api_key_source == "AGENT_OPENAI_API_KEY"
+
+
+def test_falls_back_to_openai_api_key_when_no_override_set() -> None:
+    # OPENAI_API_KEY is set to "test-key-123" by the autouse fixture;
+    # AGENT_OPENAI_API_KEY is not set.
+    with patch("agent.OpenAI") as mock_openai_cls:
+        agent_obj = OrderStatusAgent()
+
+    assert mock_openai_cls.call_args.kwargs["api_key"] == "test-key-123"
+    assert agent_obj.api_key_source == "OPENAI_API_KEY"
+
+
+def test_explicit_api_key_argument_wins_over_both_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_OPENAI_API_KEY", "override-key-456")
+
+    with patch("agent.OpenAI") as mock_openai_cls:
+        agent_obj = OrderStatusAgent(api_key="explicit-key-789")
+
+    assert mock_openai_cls.call_args.kwargs["api_key"] == "explicit-key-789"
+    assert agent_obj.api_key_source == "explicit api_key argument"
+
+
+def test_api_key_whitespace_is_stripped() -> None:
+    with patch("agent.OpenAI") as mock_openai_cls:
+        agent_obj = OrderStatusAgent(api_key="test-key-123\n", base_url="https://gateway.example.com")
+
+    # The client and the auth header must use the stripped value, not the
+    # raw one with trailing whitespace/newline (e.g. from a mounted secret
+    # file) — otherwise it silently authenticates as a different key.
+    assert mock_openai_cls.call_args.kwargs["api_key"] == "test-key-123"
+    assert agent_obj._extra_headers["X-API-Key"] == "test-key-123"
+    assert agent_obj.api_key_length == len("test-key-123")
+
+
+def test_base_url_whitespace_is_stripped() -> None:
+    with patch("agent.OpenAI") as mock_openai_cls:
+        OrderStatusAgent(api_key="test-key", base_url="  https://gateway.example.com  ")
+
+    assert mock_openai_cls.call_args.kwargs["base_url"] == "https://gateway.example.com"
 
 
 def test_default_base_url_uses_openais_own_client_config() -> None:
